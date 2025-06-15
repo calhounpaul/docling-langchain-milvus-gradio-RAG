@@ -15,4 +15,5 @@ Retrieval-Augmented Generation chatbot for research papers using LangChain, Milv
 ## Configuration
 
 Edit SEARCH_TERMS in 0_download_arxiv_pdfs.py to change paper topics
+
 Modify LLM_MODEL in 3_gradio_app.py to use different language models
