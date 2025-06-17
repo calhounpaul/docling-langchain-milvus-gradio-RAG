@@ -1,0 +1,10 @@
+feedparser
+docling
+langchain_core
+langchain_huggingface
+langchain_milvus
+transformers
+gradio
+sentence-transformers
+accelerate
+bitsandbytes

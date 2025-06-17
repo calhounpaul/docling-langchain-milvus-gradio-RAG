@@ -221,7 +221,7 @@ def create_interface():
     with gr.Blocks(title="RAG Document Q&A (Streaming)") as demo:
         gr.Markdown("""# RAG Document Q&A (Streaming)\nEnjoy real‑time answers with source citations.""")
 
-        chatbot = gr.Chatbot(height=600, label="Chat", show_copy_button=True)
+        chatbot = gr.Chatbot(height=300, label="Chat", show_copy_button=True)
 
         with gr.Row():
             msg = gr.Textbox(placeholder="Ask about the research papers…", lines=2, scale=4)

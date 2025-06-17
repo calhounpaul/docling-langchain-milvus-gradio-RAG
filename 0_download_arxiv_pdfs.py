@@ -6,13 +6,20 @@ import time
 import re
 
 SEARCH_TERMS = [
-    "language learning",
-    "glitch tokens", 
-    "quantum biology",
-    "quantum radar",
+    #"language learning",
+    #"glitch tokens", 
+    #"quantum biology",
+    #"quantum radar",
+    #"xgboost",
+    #"löb-safe logics",
+    "sonofusion",
+    "sonoluminescence",
+    "amino acid chirality",
+    "mantis shrimp",
+    "histocompatibility"
 ]
 OUTPUT_DIR = "./arxiv_pdfs"
-MAX_RESULTS = 10
+MAX_RESULTS = 5
 
 def sanitize_filename(filename):
     filename = re.sub(r'[<>:"/\\|?*]', '', filename)
@@ -41,6 +48,7 @@ def search_arxiv(query, max_results=50):
         papers = []
         for entry in feed.entries:
             paper_id = entry.id.split('/abs/')[-1]
+            assert " " not in paper_id, "Underscore found in paper_id. Will need a more complex separator"
             papers.append({
                 'id': paper_id,
                 'title': entry.title.replace('\n', ' ').strip(),

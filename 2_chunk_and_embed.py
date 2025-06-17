@@ -84,6 +84,7 @@ def chunk_documents(input_path: str, store: Milvus | None) -> List[Document]:
         tokenizer=AutoTokenizer.from_pretrained(EMBED_MODEL),
         max_tokens=MAX_TOKENS,
     )
+    #https://docling-project.github.io/docling/concepts/chunking/#hybrid-chunker
     chunker   = HybridChunker(tokenizer=tokenizer)
 
     docs: List[Document] = []
@@ -153,11 +154,37 @@ def _new_store(docs: List[Document]) -> Milvus:
 
 
 def _load_store() -> Milvus:
-    return Milvus(
-        embedding       = _embedding_model(),
-        collection_name = COLLECTION,
-        connection_args = {"uri": str(Path(DB_PATH).absolute())},
-    )
+    """Load existing Milvus collection with embedding function."""
+    # Try different parameter names based on langchain_milvus version
+    embedding_model = _embedding_model()
+    
+    try:
+        # Try with embedding_function parameter
+        return Milvus(
+            embedding_function = embedding_model,
+            collection_name = COLLECTION,
+            connection_args = {"uri": str(Path(DB_PATH).absolute())},
+        )
+    except TypeError:
+        try:
+            # Try with embeddings parameter  
+            return Milvus(
+                embeddings = embedding_model,
+                collection_name = COLLECTION,
+                connection_args = {"uri": str(Path(DB_PATH).absolute())},
+            )
+        except TypeError:
+            # Fall back to basic constructor and set embedding after
+            store = Milvus(
+                collection_name = COLLECTION,
+                connection_args = {"uri": str(Path(DB_PATH).absolute())},
+            )
+            # Try to set the embedding function manually
+            if hasattr(store, 'embedding_func'):
+                store.embedding_func = embedding_model
+            elif hasattr(store, '_embedding'):
+                store._embedding = embedding_model
+            return store
 
 
 def _upsert(store: Milvus, docs: List[Document]):

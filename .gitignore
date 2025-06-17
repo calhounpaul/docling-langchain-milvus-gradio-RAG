@@ -1,3 +1,10 @@
+#
+.docling_vectorstore.db.lock
+.gradio
+arxiv_pdfs
+docling_vectorstore.db
+parsed_docling_files
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
