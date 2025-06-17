@@ -15,9 +15,6 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 _log = logging.getLogger(__name__)
 
-USE_V2 = True
-USE_LEGACY = False
-
 OUTPUT_DATA_PATH = "parsed_docling_files"
 if not os.path.exists(OUTPUT_DATA_PATH):
     os.mkdir(OUTPUT_DATA_PATH)
@@ -39,71 +36,43 @@ def export_documents(
             print(success_count,"/",to_do_count)
             doc_filename = conv_res.input.file.stem
 
-            if USE_V2:
-                # KEY CHANGE: Use EMBEDDED instead of PLACEHOLDER for base64 images
-                conv_res.document.save_as_json(
-                    output_dir / f"{doc_filename}.json",
-                    image_mode=ImageRefMode.EMBEDDED,
-                )
-                conv_res.document.save_as_html(
-                    output_dir / f"{doc_filename}.html",
-                    image_mode=ImageRefMode.EMBEDDED,
-                )
-                conv_res.document.save_as_document_tokens(
-                    output_dir / f"{doc_filename}.doctags.txt"
-                )
-                conv_res.document.save_as_markdown(
-                    output_dir / f"{doc_filename}.md",
-                    image_mode=ImageRefMode.PLACEHOLDER,
-                )
-                conv_res.document.save_as_markdown(
-                    output_dir / f"{doc_filename}.txt",
-                    image_mode=ImageRefMode.PLACEHOLDER,
-                    strict_text=True,
-                )
+            # KEY CHANGE: Use EMBEDDED instead of PLACEHOLDER for base64 images
+            conv_res.document.save_as_json(
+                output_dir / f"{doc_filename}.json",
+                image_mode=ImageRefMode.EMBEDDED,
+            )
+            conv_res.document.save_as_html(
+                output_dir / f"{doc_filename}.html",
+                image_mode=ImageRefMode.EMBEDDED,
+            )
+            conv_res.document.save_as_document_tokens(
+                output_dir / f"{doc_filename}.doctags.txt"
+            )
+            conv_res.document.save_as_markdown(
+                output_dir / f"{doc_filename}.md",
+                image_mode=ImageRefMode.PLACEHOLDER,
+            )
+            conv_res.document.save_as_markdown(
+                output_dir / f"{doc_filename}.txt",
+                image_mode=ImageRefMode.PLACEHOLDER,
+                strict_text=True,
+            )
 
-                # Export Docling document format to YAML:
-                with (output_dir / f"{doc_filename}.yaml").open("w") as fp:
-                    fp.write(yaml.safe_dump(conv_res.document.export_to_dict()))
+            # Export Docling document format to YAML:
+            with (output_dir / f"{doc_filename}.yaml").open("w") as fp:
+                fp.write(yaml.safe_dump(conv_res.document.export_to_dict()))
 
-                # Export Docling document format to doctags:
-                with (output_dir / f"{doc_filename}.doctags.txt").open("w") as fp:
-                    fp.write(conv_res.document.export_to_document_tokens())
+            # Export Docling document format to doctags:
+            with (output_dir / f"{doc_filename}.doctags.txt").open("w") as fp:
+                fp.write(conv_res.document.export_to_document_tokens())
 
-                # Export Docling document format to markdown:
-                with (output_dir / f"{doc_filename}.md").open("w") as fp:
-                    fp.write(conv_res.document.export_to_markdown())
+            # Export Docling document format to markdown:
+            with (output_dir / f"{doc_filename}.md").open("w") as fp:
+                fp.write(conv_res.document.export_to_markdown())
 
-                # Export Docling document format to text:
-                with (output_dir / f"{doc_filename}.txt").open("w") as fp:
-                    fp.write(conv_res.document.export_to_markdown(strict_text=True))
-
-            if USE_LEGACY:
-                # Export Deep Search document JSON format:
-                with (output_dir / f"{doc_filename}.legacy.json").open(
-                    "w", encoding="utf-8"
-                ) as fp:
-                    fp.write(json.dumps(conv_res.legacy_document.export_to_dict()))
-
-                # Export Text format:
-                with (output_dir / f"{doc_filename}.legacy.txt").open(
-                    "w", encoding="utf-8"
-                ) as fp:
-                    fp.write(
-                        conv_res.legacy_document.export_to_markdown(strict_text=True)
-                    )
-
-                # Export Markdown format:
-                with (output_dir / f"{doc_filename}.legacy.md").open(
-                    "w", encoding="utf-8"
-                ) as fp:
-                    fp.write(conv_res.legacy_document.export_to_markdown())
-
-                # Export Document Tags format:
-                with (output_dir / f"{doc_filename}.legacy.doctags.txt").open(
-                    "w", encoding="utf-8"
-                ) as fp:
-                    fp.write(conv_res.legacy_document.export_to_document_tokens())
+            # Export Docling document format to text:
+            with (output_dir / f"{doc_filename}.txt").open("w") as fp:
+                fp.write(conv_res.document.export_to_markdown(strict_text=True))
 
         elif conv_res.status == ConversionStatus.PARTIAL_SUCCESS:
             _log.info(
