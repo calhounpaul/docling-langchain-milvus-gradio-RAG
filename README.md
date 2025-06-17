@@ -9,7 +9,7 @@ Retrieval-Augmented Generation chatbot for research papers using LangChain, Milv
 * 📥 Download arXiv papers by search terms
 * 🧠 Parse PDFs into structured document format
 * 🔍 Chunk and embed content into Milvus vector DB
-* 💬 Gradio chat interface with Qwen-1.7B LLM
+* 💬 Gradio chat interface with Qwen3
 * 🔗 Source citations for answers
 
 ## Configuration
