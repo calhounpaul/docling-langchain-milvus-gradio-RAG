@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
 import os
 import json
 from pathlib import Path
@@ -11,153 +14,208 @@ from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from transformers import AutoTokenizer
 
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-INPUT_PATH = "parsed_docling_files"
-DB_PATH = "./docling_vectorstore.db"
+# ────────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ────────────────────────────────────────────────────────────────────────────────
+EMBED_MODEL   = "Qwen/Qwen3-Embedding-0.6B"
+INPUT_PATH    = "parsed_docling_files"
+DB_PATH       = "./docling_vectorstore.db"
+COLLECTION    = "docling_demo"
+DEVICE        = "cuda:1"
+MAX_TOKENS    = 1_536
 
-def serialize_metadata(value):
-    return json.dumps(value) if isinstance(value, (list, dict)) else value
 
-def process_documents(input_path: str) -> List[Document]:
-    tokenizer = HuggingFaceTokenizer(tokenizer=AutoTokenizer.from_pretrained(EMBED_MODEL))
-    chunker = HybridChunker(tokenizer=tokenizer)
-    documents = []
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────────
 
-    for filename in os.listdir(input_path):
+def _serialize_metadata(v):
+    """Ensure lists & dicts are stringified for Milvus storage."""
+    return json.dumps(v) if isinstance(v, (list, dict)) else v
+
+
+def _make_doc_id(filename: str, chunk_index: int) -> str:
+    """Stable identifier for a chunk; also used as the Milvus primary key."""
+    return f"{filename}:{chunk_index}"
+
+
+def _already_indexed(store: Milvus, doc_id: str) -> bool:
+    """Quick point‑lookup to see whether this id is in the collection."""
+    try:
+        return bool(store.get(ids=[doc_id]))
+    except Exception:
+        # Milvus raises if the ID is not found → treat as "not yet indexed"
+        return False
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Document processing
+# ────────────────────────────────────────────────────────────────────────────────
+
+def _build_doc_items_info(chunk) -> list:
+    """Extract the doc_items structure (same shape as the original script)."""
+    if not (hasattr(chunk, "meta") and chunk.meta and chunk.meta.doc_items):
+        return []
+
+    info = []
+    for it in chunk.meta.doc_items:
+        item = {
+            "label"   : getattr(it.label, "value", str(it.label)),
+            "self_ref": it.self_ref,
+        }
+        prov = (it.prov or [None])[0]
+        if prov:
+            if getattr(prov, "bbox", None):
+                item["bbox"] = {
+                    "left"  : prov.bbox.l,
+                    "top"   : prov.bbox.t,
+                    "right" : prov.bbox.r,
+                    "bottom": prov.bbox.b,
+                }
+            if hasattr(prov, "page_no"):
+                item["page_no"] = prov.page_no
+        info.append(item)
+    return info
+
+
+def chunk_documents(input_path: str, store: Milvus | None) -> List[Document]:
+    """Return a list of *new* Documents that still need to be embedded."""
+    tokenizer = HuggingFaceTokenizer(
+        tokenizer=AutoTokenizer.from_pretrained(EMBED_MODEL),
+        max_tokens=MAX_TOKENS,
+    )
+    chunker   = HybridChunker(tokenizer=tokenizer)
+
+    docs: List[Document] = []
+    skipped = 0
+
+    for filename in sorted(os.listdir(input_path)):
         if not filename.endswith(".json"):
             continue
-            
-        print(f"Processing {filename}")
-        doc = DoclingDocument.load_from_json(os.path.join(input_path, filename))
-        chunks = list(chunker.chunk(dl_doc=doc))
 
-        for i, chunk in enumerate(chunks):
-            text = chunker.contextualize(chunk=chunk)
-            
+        print(f"[•] {filename}")
+        dl_doc = DoclingDocument.load_from_json(os.path.join(input_path, filename))
+
+        for idx, chunk in enumerate(chunker.chunk(dl_doc)):
+            doc_id = _make_doc_id(filename, idx)
+
+            # Dedup check
+            if store is not None and _already_indexed(store, doc_id):
+                skipped += 1
+                continue
+
+            text = chunker.contextualize(chunk)
             metadata = {
-                "source": filename,
-                "chunk_id": i,
-                "num_tokens": tokenizer.count_tokens(text=text),
-                "doc_items_refs": json.dumps([it.self_ref for it in chunk.meta.doc_items]),
-                "headings": json.dumps([]),
-                "original_filename": "",
-                "mimetype": "",
-                "doc_items": json.dumps([]),
+                "doc_id"          : doc_id,
+                "source"          : filename,
+                "chunk_id"        : idx,
+                "num_tokens"      : tokenizer.count_tokens(text=text),
+                "doc_items_refs"  : [it.self_ref for it in chunk.meta.doc_items],
+                "headings"        : chunk.meta.headings if chunk.meta and chunk.meta.headings else [],
+                "original_filename": getattr(chunk.meta.origin, "filename", ""),
+                "mimetype"        : getattr(chunk.meta.origin, "mimetype", ""),
+                "doc_items"       : _build_doc_items_info(chunk),
             }
+            metadata = {k: _serialize_metadata(v) for k, v in metadata.items()}
 
-            if hasattr(chunk, 'meta') and chunk.meta:
-                if hasattr(chunk.meta, 'headings') and chunk.meta.headings:
-                    metadata["headings"] = json.dumps(chunk.meta.headings)
-                if hasattr(chunk.meta, 'origin') and chunk.meta.origin:
-                    origin = chunk.meta.origin
-                    if hasattr(origin, 'filename'):
-                        metadata["original_filename"] = origin.filename
-                    if hasattr(origin, 'mimetype'):
-                        metadata["mimetype"] = origin.mimetype
+            docs.append(Document(page_content=text, metadata=metadata))
 
-                doc_items_info = []
-                for doc_item in chunk.meta.doc_items:
-                    item_info = {
-                        "label": doc_item.label.value if hasattr(doc_item.label, 'value') else str(doc_item.label),
-                        "self_ref": doc_item.self_ref
-                    }
-                    if hasattr(doc_item, 'prov') and doc_item.prov:
-                        prov = doc_item.prov[0]
-                        if hasattr(prov, 'bbox') and prov.bbox:
-                            item_info["bbox"] = {
-                                "left": prov.bbox.l, "top": prov.bbox.t,
-                                "right": prov.bbox.r, "bottom": prov.bbox.b
-                            }
-                        if hasattr(prov, 'page_no'):
-                            item_info["page_no"] = prov.page_no
-                    doc_items_info.append(item_info)
-                metadata["doc_items"] = json.dumps(doc_items_info)
+    print(f"  ↳ new chunks: {len(docs)}, skipped (already embedded): {skipped}")
+    return docs
 
-            for key, value in metadata.items():
-                metadata[key] = serialize_metadata(value)
 
-            documents.append(Document(page_content=text, metadata=metadata))
+# ────────────────────────────────────────────────────────────────────────────────
+# Vector‑store helpers
+# ────────────────────────────────────────────────────────────────────────────────
 
-    print(f"Processed {len(documents)} chunks")
-    return documents
-
-def create_vector_store(documents: List[Document]) -> Milvus:
-    embedding = HuggingFaceEmbeddings(model_name=EMBED_MODEL, model_kwargs={'device': 'cuda:1'})
-    db_path = Path(DB_PATH)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    vectorstore = Milvus.from_documents(
-        documents=documents,
-        embedding=embedding,
-        collection_name="docling_demo",
-        connection_args={"uri": str(db_path.absolute())},
-        index_params={"index_type": "FLAT"},
-        drop_old=True,
+def _embedding_model():
+    return HuggingFaceEmbeddings(
+        model_name=EMBED_MODEL,
+        model_kwargs={"device": DEVICE},
     )
 
-    print(f"Vector store created: {len(documents)} docs -> {db_path}")
-    return vectorstore
 
-def load_vector_store() -> Milvus:
-    db_path = Path(DB_PATH)
-    if not db_path.exists():
-        raise FileNotFoundError(f"No vector store at {db_path}")
+def _new_store(docs: List[Document]) -> Milvus:
+    """Create a fresh Milvus collection from `docs`."""
+    db = Path(DB_PATH)
+    db.parent.mkdir(parents=True, exist_ok=True)
 
-    embedding = HuggingFaceEmbeddings(model_name=EMBED_MODEL, model_kwargs={'device': 'cuda:1'})
+    print(f"Creating collection '{COLLECTION}' with {len(docs)} chunks …")
+    return Milvus.from_documents(
+        documents       = docs,
+        embedding       = _embedding_model(),
+        collection_name = COLLECTION,
+        connection_args = {"uri": str(db.absolute())},
+        index_params    = {"index_type": "FLAT"},
+        ids             = [d.metadata["doc_id"] for d in docs],
+        drop_old        = True,
+    )
+
+
+def _load_store() -> Milvus:
     return Milvus(
-        embedding=embedding,
-        collection_name="docling_demo",
-        connection_args={"uri": str(db_path.absolute())},
+        embedding       = _embedding_model(),
+        collection_name = COLLECTION,
+        connection_args = {"uri": str(Path(DB_PATH).absolute())},
     )
 
-def search_docs(vectorstore: Milvus, query: str, k: int = 3) -> List[Document]:
-    results = vectorstore.similarity_search(query, k=k)
-    print(f"Found {len(results)} results for: {query}")
-    for i, doc in enumerate(results, 1):
-        print(f"{i}. {doc.page_content[:100]}... (from {doc.metadata.get('source', 'unknown')})")
-    return results
+
+def _upsert(store: Milvus, docs: List[Document]):
+    if not docs:
+        print("Nothing new to embed – collection already up‑to‑date ✅")
+        return
+
+    print(f"Adding {len(docs)} new chunks …")
+    store.add_documents(
+        documents = docs,
+        ids       = [d.metadata["doc_id"] for d in docs],
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Demo similarity search
+# ────────────────────────────────────────────────────────────────────────────────
+
+def _search_demo(store: Milvus):
+    queries = [
+        "artificial intelligence models",
+        "table structure recognition",
+        "document processing pipeline",
+    ]
+    for q in queries:
+        print(f"\n🔍 {q!r}")
+        for i, doc in enumerate(store.similarity_search(q, k=2), 1):
+            snippet = doc.page_content[:96].replace("\n", " ") + "…"
+            print(f"{i:>2}. {snippet:<100} ({doc.metadata.get('source')})")
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Main
+# ────────────────────────────────────────────────────────────────────────────────
 
 def main():
-    db_path = Path(DB_PATH)
-    
-    if db_path.exists():
-        choice = input("Vector store exists. (L)oad or (R)ecreate? ").upper()
-        if choice == 'L':
-            try:
-                vectorstore = load_vector_store()
-                print("Loaded existing vector store")
-            except Exception as e:
-                print(f"Load failed: {e}")
-                vectorstore = None
-        else:
-            vectorstore = None
+    input_dir = Path(INPUT_PATH)
+    if not input_dir.exists():
+        raise SystemExit(f"No input directory: {input_dir}")
+
+    store = None
+    if Path(DB_PATH).exists():
+        try:
+            store = _load_store()
+            print(f"Loaded existing collection '{COLLECTION}'")
+        except Exception as exc:
+            print(f"Could not load existing store ({exc}). Re‑creating …")
+
+    new_docs = chunk_documents(str(input_dir), store)
+
+    if store:
+        _upsert(store, new_docs)
     else:
-        vectorstore = None
+        store = _new_store(new_docs)
 
-    if vectorstore is None:
-        if not os.path.exists(INPUT_PATH):
-            print(f"No input documents at {INPUT_PATH}")
-            return
-        
-        documents = process_documents(INPUT_PATH)
-        if not documents:
-            print("No documents processed")
-            return
-        
-        vectorstore = create_vector_store(documents)
+    _search_demo(store)
+    print("\nDone ✅")
 
-    # Test searches
-    test_queries = [
-        "artificial intelligence models",
-        "table structure recognition", 
-        "document processing pipeline"
-    ]
-    
-    for query in test_queries:
-        print(f"\n--- Testing: {query} ---")
-        search_docs(vectorstore, query, k=2)
-
-    print("Done")
 
 if __name__ == "__main__":
     main()
